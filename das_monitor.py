@@ -53,10 +53,12 @@ GAP_STATS_URL = "https://eapi.askedgar.io/v1/gap-stats"
 GAP_STATS_KEY = ASKEDGAR_API_KEY
 OFFERINGS_API_URL = "https://eapi.askedgar.io/v1/offerings"
 OFFERINGS_API_KEY = ASKEDGAR_API_KEY
+OWNERSHIP_API_URL = "https://eapi.askedgar.io/v1/ownership"
+OWNERSHIP_API_KEY = ASKEDGAR_API_KEY
 POLL_INTERVAL = 1.0
 
 # Polygon / Market Data API
-POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY", "")
+POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY", "c2ylbMmZhpwnJlo_cRAcjpha5Nn_ahUm")
 POLYGON_GAINERS_URL = "https://api.massive.com/v2/snapshot/locale/us/markets/stocks/gainers"
 POLYGON_TICKER_URL = "https://api.massive.com/v3/reference/tickers"
 GAINERS_REFRESH_SECS = 60
@@ -453,6 +455,23 @@ def fetch_offerings(ticker: str) -> list[dict]:
     return []
 
 
+def fetch_ownership(ticker: str) -> dict | None:
+    """Fetch ownership data – returns the latest reported_date group, or None."""
+    try:
+        resp = requests.get(
+            OWNERSHIP_API_URL,
+            headers={"API-KEY": OWNERSHIP_API_KEY, "Content-Type": "application/json"},
+            params={"ticker": ticker, "limit": 100},
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("status") == "success" and data.get("results"):
+            return data["results"][0]  # latest reported_date group
+    except Exception as e:
+        print(f"Ownership API error for {ticker}: {e}")
+    return None
+
+
 def extract_headline(item: dict) -> str:
     if item.get("title"):
         return item["title"]
@@ -730,7 +749,8 @@ class DilutionOverlay:
                    stock_price: float = 0.0,
                    jmt415_notes: list[dict] | None = None,
                    gap_stats: list[dict] | None = None,
-                   offerings: list[dict] | None = None):
+                   offerings: list[dict] | None = None,
+                   ownership: dict | None = None):
         self._clear()
 
         risk = dilution.get("overall_offering_risk", "N/A")
@@ -816,6 +836,10 @@ class DilutionOverlay:
         commentary = dilution.get("mgmt_commentary")
         if commentary:
             self._add_section_card("Mgmt Commentary", commentary, url=dilution_url)
+
+        # ── Ownership card ──
+        if ownership and ownership.get("owners"):
+            self._add_ownership_card(ownership)
 
     def _add_badge_grid(self, parent, label: str, level: str,
                         url: str | None = None, row: int = 0, col: int = 0):
@@ -1157,6 +1181,51 @@ class DilutionOverlay:
                 lbl.config(wraplength=max(event.width - 40, 100))
             row.bind("<Configure>", _rewrap)
 
+    def _add_ownership_card(self, ownership: dict):
+        """Ownership card showing latest reported date with owner table."""
+        reported_date = (ownership.get("reported_date") or "")[:10]
+        title = f"Ownership  ({reported_date})" if reported_date else "Ownership"
+        card = self._make_card(self.content_frame, title=title)
+        body = tk.Frame(card, bg=BG_CARD, padx=10, pady=10)
+        body.pack(fill="x")
+
+        # Table header
+        hdr = tk.Frame(body, bg=BG_CARD)
+        hdr.pack(fill="x", pady=(0, 4))
+        tk.Label(hdr, text="Owner", fg=ACCENT, bg=BG_CARD,
+                 font=FONT_MONO_BOLD, anchor="w", width=20).pack(side="left")
+        tk.Label(hdr, text="Title", fg=ACCENT, bg=BG_CARD,
+                 font=FONT_MONO_BOLD, anchor="w", width=14).pack(side="left")
+        tk.Label(hdr, text="Shares", fg=ACCENT, bg=BG_CARD,
+                 font=FONT_MONO_BOLD, anchor="e").pack(side="right")
+
+        doc_url = ""
+        owners = ownership.get("owners", [])
+        for i, owner in enumerate(owners):
+            row_bg = BG_ROW if i % 2 == 0 else BG_ROW_ALT
+            row = tk.Frame(body, bg=row_bg)
+            row.pack(fill="x", pady=1)
+            inner = tk.Frame(row, bg=row_bg, padx=6, pady=4)
+            inner.pack(fill="x")
+
+            name = owner.get("owner_name", "")
+            title_str = owner.get("title", "") or owner.get("owner_type", "")
+            shares = owner.get("common_shares_amount", 0)
+            shares_str = f"{shares:,.0f}" if shares else "0"
+
+            tk.Label(inner, text=name, fg=FG, bg=row_bg,
+                     font=FONT_MONO, anchor="w", width=20).pack(side="left")
+            tk.Label(inner, text=title_str, fg=FG_DIM, bg=row_bg,
+                     font=FONT_MONO, anchor="w", width=14).pack(side="left")
+            tk.Label(inner, text=shares_str, fg="#4CAF50", bg=row_bg,
+                     font=FONT_MONO_BOLD, anchor="e").pack(side="right")
+
+            if not doc_url:
+                doc_url = owner.get("document_url", "")
+
+        if doc_url:
+            self._bind_card_click(card, doc_url)
+
     def _add_in_play_section(self, warrants: list[dict], convertibles: list[dict],
                              stock_price: float = 0.0, dilution_url: str = ""):
         card = self._make_card(self.content_frame, title="In Play Dilution")
@@ -1443,6 +1512,7 @@ class DilutionOverlay:
             warrants, converts, stock_price = fetch_in_play_dilution(ticker)
             gap_stats = fetch_gap_stats(ticker)
             recent_offerings = fetch_offerings(ticker)
+            ownership = fetch_ownership(ticker)
             # Fetch chart analysis for history badge
             history_rating = ""
             history_url = ""
@@ -1463,7 +1533,7 @@ class DilutionOverlay:
             if dilution:
                 self.root.after(0, self._show_data, ticker, dilution, floatdata,
                                 news, grok_line, grok_date, grok_url, warrants, converts, stock_price,
-                                jmt415_notes, gap_stats, recent_offerings)
+                                jmt415_notes, gap_stats, recent_offerings, ownership)
             else:
                 self.root.after(0, self._show_no_data, ticker)
 
