@@ -57,7 +57,7 @@ If you're new to coding or "vibe coding," the easiest way to get this running is
 
 Open Claude Code in VS Code and tell it:
 
-> "I want to clone this GitHub repo and set it up: https://github.com/jasontange/Ask-Edgar-Dilution-Monitor-Public"
+> "I want to clone this GitHub repo and set it up: https://github.com/jasontange/Top-Gainers-Dilution-Monitor-V2-Public"
 
 Claude will:
 - Install **git** if you don't have it
@@ -138,8 +138,8 @@ To stop the app, just close the overlay window (click the X) or close the comman
 <summary><b>Alternative: Setup via command line</b></summary>
 
 ```bash
-git clone https://github.com/jasontange/Ask-Edgar-Dilution-Monitor-Public.git
-cd Ask-Edgar-Dilution-Monitor-Public
+git clone https://github.com/jasontange/Top-Gainers-Dilution-Monitor-V2-Public.git
+cd Top-Gainers-Dilution-Monitor-V2-Public
 pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your API keys
