@@ -30,13 +30,6 @@ except ImportError:
 # See .env.example for details
 ASKEDGAR_API_KEY = os.environ.get("ASKEDGAR_API_KEY", "")
 
-if not ASKEDGAR_API_KEY or not POLYGON_API_KEY:
-    print("ERROR: Missing API key(s). Copy .env.example to .env and fill in your keys.")
-    if not ASKEDGAR_API_KEY:
-        print("  ASKEDGAR_API_KEY - request trial at https://www.askedgar.io/api-trial")
-    if not POLYGON_API_KEY:
-        print("  POLYGON_API_KEY  - sign up at https://massive.com")
-
 DILUTION_API_URL = "https://eapi.askedgar.io/enterprise/v1/dilution-rating"
 DILUTION_API_KEY = ASKEDGAR_API_KEY
 FLOAT_API_URL = "https://eapi.askedgar.io/enterprise/v1/float-outstanding"
@@ -62,6 +55,13 @@ POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY", "")
 POLYGON_GAINERS_URL = "https://api.massive.com/v2/snapshot/locale/us/markets/stocks/gainers"
 POLYGON_TICKER_URL = "https://api.massive.com/v3/reference/tickers"
 GAINERS_REFRESH_SECS = 60
+
+if not ASKEDGAR_API_KEY or not POLYGON_API_KEY:
+    print("ERROR: Missing API key(s). Copy .env.example to .env and fill in your keys.")
+    if not ASKEDGAR_API_KEY:
+        print("  ASKEDGAR_API_KEY - request trial at https://www.askedgar.io/api-trial")
+    if not POLYGON_API_KEY:
+        print("  POLYGON_API_KEY  - sign up at https://massive.com")
 
 # Ticker filter: 2-4 uppercase letters, no periods or special chars
 TICKER_RE = re.compile(r'^[A-Z]{2,4}$')
