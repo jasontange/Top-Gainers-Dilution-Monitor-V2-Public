@@ -39,8 +39,9 @@ if not exist .env (
     echo 2. Replace "your_api_key_here" with your Ask Edgar API key
     echo 3. Save the file
     echo.
-    echo Don't have a key? Request a free trial at:
-    echo https://share-na2.hsforms.com/1mRWaNy8PRFuCZr5YJvjdQQqjkci
+    echo Don't have keys? Request free trials at:
+    echo   Ask Edgar: https://www.askedgar.io/api-trial
+    echo   Massive:   https://massive.com
     echo.
 ) else (
     echo .env file already exists - skipping.
