@@ -51,7 +51,7 @@ OWNERSHIP_API_KEY = ASKEDGAR_API_KEY
 POLL_INTERVAL = 1.0
 
 # Polygon / Market Data API
-POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY", "c2ylbMmZhpwnJlo_cRAcjpha5Nn_ahUm")
+POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY", "")
 POLYGON_GAINERS_URL = "https://api.massive.com/v2/snapshot/locale/us/markets/stocks/gainers"
 POLYGON_TICKER_URL = "https://api.massive.com/v3/reference/tickers"
 GAINERS_REFRESH_SECS = 60
