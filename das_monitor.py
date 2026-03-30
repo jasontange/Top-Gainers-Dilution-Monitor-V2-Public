@@ -51,7 +51,7 @@ OWNERSHIP_API_KEY = ASKEDGAR_API_KEY
 POLL_INTERVAL = 1.0
 
 # Polygon / Market Data API
-POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY", "")
+POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY", "c2ylbMmZhpwnJlo_cRAcjpha5Nn_ahUm")
 POLYGON_GAINERS_URL = "https://api.massive.com/v2/snapshot/locale/us/markets/stocks/gainers"
 POLYGON_TICKER_URL = "https://api.massive.com/v3/reference/tickers"
 GAINERS_REFRESH_SECS = 60
@@ -92,8 +92,8 @@ RISK_BG = {
 # Chart history rating: API color -> (label, badge color)
 HISTORY_MAP = {
     "green":  ("Strong", "#2F7D57"),
-    "yellow": ("Mixed",  "#B9A816"),
-    "orange": ("Weak",   "#B96A16"),
+    "yellow": ("Semi-Strong", "#B9A816"),
+    "orange": ("Mixed",      "#B96A16"),
     "red":    ("Fader",  "#A93232"),
 }
 
@@ -1334,8 +1334,8 @@ class DilutionOverlay:
         """Build a single clickable gainer row."""
         ticker = item.get("ticker", "")
         change_pct = item.get("todaysChangePerc", 0)
-        price = item.get("day", {}).get("c", 0) or 0
-        volume = item.get("day", {}).get("v", 0) or 0
+        price = item.get("day", {}).get("c", 0) or item.get("lastTrade", {}).get("p", 0) or 0
+        volume = item.get("day", {}).get("v", 0) or item.get("min", {}).get("av", 0) or 0
 
         is_selected = (ticker == self._selected_gainer)
         row_bg = BG_SELECTED if is_selected else BG_CARD
