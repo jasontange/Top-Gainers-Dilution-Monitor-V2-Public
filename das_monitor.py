@@ -51,7 +51,7 @@ OWNERSHIP_API_KEY = ASKEDGAR_API_KEY
 POLL_INTERVAL = 1.0
 
 # Polygon / Market Data API
-POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY", "")
+POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY", "c2ylbMmZhpwnJlo_cRAcjpha5Nn_ahUm")
 POLYGON_GAINERS_URL = "https://api.massive.com/v2/snapshot/locale/us/markets/stocks/gainers"
 POLYGON_TICKER_URL = "https://api.massive.com/v3/reference/tickers"
 GAINERS_REFRESH_SECS = 60
@@ -753,8 +753,14 @@ class DilutionOverlay:
                    ownership: dict | None = None):
         self._clear()
 
-        risk = dilution.get("overall_offering_risk", "N/A")
-        self.overall_badge.config(text=f"RISK: {risk}", bg=risk_bg(risk))
+        dilution_url = f"https://app.askedgar.io/ticker/{ticker}/dilution"
+        has_dilution = bool(dilution and dilution.get("overall_offering_risk"))
+
+        if has_dilution:
+            risk = dilution.get("overall_offering_risk", "N/A")
+            self.overall_badge.config(text=f"RISK: {risk}", bg=risk_bg(risk))
+        else:
+            self.overall_badge.config(text="NO DATA", bg="#4A525C")
 
         # ── Info line from float data ──
         if floatdata:
@@ -792,27 +798,28 @@ class DilutionOverlay:
                 self._add_feed_item(feed_inner, "grok", grok_line, grok_url, grok_date_str)
 
         # ── Risk badges card (grid: 3 columns, wraps to 2 rows) ──
-        dilution_url = f"https://app.askedgar.io/ticker/{ticker}/dilution"
-        badges_card = self._make_card(self.content_frame)
-        badges_inner = tk.Frame(badges_card, bg=BG_CARD, padx=8, pady=8, cursor="hand2")
-        badges_inner.pack(fill="x")
-        badges_inner.bind("<Button-1>", lambda e, u=dilution_url: webbrowser.open(u))
+        if has_dilution:
+            risk = dilution.get("overall_offering_risk", "N/A")
+            badges_card = self._make_card(self.content_frame)
+            badges_inner = tk.Frame(badges_card, bg=BG_CARD, padx=8, pady=8, cursor="hand2")
+            badges_inner.pack(fill="x")
+            badges_inner.bind("<Button-1>", lambda e, u=dilution_url: webbrowser.open(u))
 
-        badge_items = [
-            ("Overall Risk", risk),
-            ("Offering", dilution.get("offering_ability", "N/A")),
-            ("Dilution", dilution.get("dilution", "N/A")),
-            ("Frequency", dilution.get("offering_frequency", "N/A")),
-            ("Cash Need", dilution.get("cash_need", "N/A")),
-            ("Warrants", dilution.get("warrant_exercise", "N/A")),
-        ]
-        for i, (label, level) in enumerate(badge_items):
-            self._add_badge_grid(badges_inner, label, level, dilution_url,
-                                 row=i // 3, col=i % 3)
-        badges_inner.columnconfigure((0, 1, 2), weight=1)
+            badge_items = [
+                ("Overall Risk", risk),
+                ("Offering", dilution.get("offering_ability", "N/A")),
+                ("Dilution", dilution.get("dilution", "N/A")),
+                ("Frequency", dilution.get("offering_frequency", "N/A")),
+                ("Cash Need", dilution.get("cash_need", "N/A")),
+                ("Warrants", dilution.get("warrant_exercise", "N/A")),
+            ]
+            for i, (label, level) in enumerate(badge_items):
+                self._add_badge_grid(badges_inner, label, level, dilution_url,
+                                     row=i // 3, col=i % 3)
+            badges_inner.columnconfigure((0, 1, 2), weight=1)
 
         # ── Offering Ability card ──
-        offering_desc = dilution.get("offering_ability_desc")
+        offering_desc = dilution.get("offering_ability_desc") if has_dilution else None
         if offering_desc:
             self._add_offering_ability_card(offering_desc, url=dilution_url)
 
@@ -833,7 +840,7 @@ class DilutionOverlay:
             self._add_jmt415_card(jmt415_notes)
 
         # ── Management Commentary card ──
-        commentary = dilution.get("mgmt_commentary")
+        commentary = dilution.get("mgmt_commentary") if has_dilution else None
         if commentary:
             self._add_section_card("Mgmt Commentary", commentary, url=dilution_url)
 
@@ -1530,12 +1537,9 @@ class DilutionOverlay:
             except Exception:
                 pass
             self.root.after(0, self._update_history_badge, history_rating, history_url)
-            if dilution:
-                self.root.after(0, self._show_data, ticker, dilution, floatdata,
-                                news, grok_line, grok_date, grok_url, warrants, converts, stock_price,
-                                jmt415_notes, gap_stats, recent_offerings, ownership)
-            else:
-                self.root.after(0, self._show_no_data, ticker)
+            self.root.after(0, self._show_data, ticker, dilution or {}, floatdata,
+                            news, grok_line, grok_date, grok_url, warrants, converts, stock_price,
+                            jmt415_notes, gap_stats, recent_offerings, ownership)
 
         threading.Thread(target=fetch, daemon=True).start()
 
