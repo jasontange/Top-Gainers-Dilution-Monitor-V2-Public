@@ -54,6 +54,25 @@ POLL_INTERVAL = 1.0
 # TradingView Scanner API (no key required)
 TV_SCANNER_URL = "https://scanner.tradingview.com/america/scan"
 GAINERS_REFRESH_SECS = 60
+MIN_GAINER_PCT = 15  # minimum % change to show in gainers list
+
+# ── API cache (reduces redundant Ask Edgar calls) ─────────────────────────
+# News is NOT cached — needs to be live. Everything else caches for 30 min.
+CACHE_TTL_SECS = 1800  # 30 minutes
+_api_cache = {}  # key -> (timestamp, data)
+
+def _cached_fetch(cache_key: str, fetch_fn):
+    """Return cached result if fresh, otherwise call fetch_fn and cache it.
+    Does NOT cache None results (transient errors should be retried)."""
+    now = time.time()
+    if cache_key in _api_cache:
+        ts, data = _api_cache[cache_key]
+        if now - ts < CACHE_TTL_SECS:
+            return data
+    data = fetch_fn()
+    if data is not None:
+        _api_cache[cache_key] = (now, data)
+    return data
 
 if not ASKEDGAR_API_KEY:
     print("ERROR: Missing API key. Copy .env.example to .env and fill in your key.")
@@ -211,8 +230,8 @@ def fetch_top_gainers() -> list[dict]:
         if not TICKER_RE.match(ticker):
             continue
         pct = d[2] or 0
-        if pct <= 0:
-            continue  # only gainers
+        if pct < MIN_GAINER_PCT:
+            continue  # only significant gainers
         tickers_data.append({
             "ticker": ticker,
             "todaysChangePerc": pct,
@@ -253,18 +272,9 @@ def fetch_top_gainers() -> list[dict]:
         if ddata:
             item["_risk"] = ddata.get("overall_offering_risk", "")
         # Chart analysis (history rating)
-        try:
-            cresp = requests.get(
-                CHART_ANALYSIS_URL,
-                headers={"API-KEY": CHART_ANALYSIS_KEY, "Content-Type": "application/json"},
-                params={"ticker": ticker, "limit": 1},
-                timeout=10,
-            )
-            cdata = cresp.json()
-            if cdata.get("status") == "success" and cdata.get("results"):
-                item["_history"] = cdata["results"][0].get("rating", "")
-        except Exception:
-            pass
+        chart = fetch_chart_analysis(ticker)
+        if chart:
+            item["_history"] = chart.get("rating", "")
         # Check for news/filings today
         from datetime import datetime
         today = datetime.now().strftime("%Y-%m-%d")
@@ -303,35 +313,39 @@ def fetch_top_gainers() -> list[dict]:
 
 # ── Ask Edgar APIs ──────────────────────────────────────────────────────────
 def fetch_dilution_data(ticker: str) -> dict | None:
-    try:
-        resp = requests.get(
-            DILUTION_API_URL,
-            headers={"API-KEY": DILUTION_API_KEY, "Content-Type": "application/json"},
-            params={"ticker": ticker, "offset": 0, "limit": 10},
-            timeout=10,
-        )
-        data = resp.json()
-        if data.get("status") == "success" and data.get("results"):
-            return data["results"][0]
-    except Exception as e:
-        print(f"Dilution API error for {ticker}: {e}")
-    return None
+    def _fetch():
+        try:
+            resp = requests.get(
+                DILUTION_API_URL,
+                headers={"API-KEY": DILUTION_API_KEY, "Content-Type": "application/json"},
+                params={"ticker": ticker, "offset": 0, "limit": 10},
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("status") == "success" and data.get("results"):
+                return data["results"][0]
+        except Exception as e:
+            print(f"Dilution API error for {ticker}: {e}")
+        return None
+    return _cached_fetch(f"dilution:{ticker}", _fetch)
 
 
 def fetch_float_data(ticker: str) -> dict | None:
-    try:
-        resp = requests.get(
-            FLOAT_API_URL,
-            headers={"API-KEY": FLOAT_API_KEY, "Content-Type": "application/json"},
-            params={"ticker": ticker, "offset": 0, "limit": 100},
-            timeout=10,
-        )
-        data = resp.json()
-        if data.get("status") == "success" and data.get("results"):
-            return data["results"][0]
-    except Exception as e:
-        print(f"Float API error for {ticker}: {e}")
-    return None
+    def _fetch():
+        try:
+            resp = requests.get(
+                FLOAT_API_URL,
+                headers={"API-KEY": FLOAT_API_KEY, "Content-Type": "application/json"},
+                params={"ticker": ticker, "offset": 0, "limit": 100},
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("status") == "success" and data.get("results"):
+                return data["results"][0]
+        except Exception as e:
+            print(f"Float API error for {ticker}: {e}")
+        return None
+    return _cached_fetch(f"float:{ticker}", _fetch)
 
 
 def fetch_news_and_grok(ticker: str) -> tuple[list[dict], str | None, str | None, str | None, list[dict]]:
@@ -373,130 +387,159 @@ def fetch_news_and_grok(ticker: str) -> tuple[list[dict], str | None, str | None
 
 def fetch_last_price(ticker: str) -> float | None:
     """Fetch last price via Ask Edgar screener endpoint."""
-    try:
-        resp = requests.get(
-            SCREENER_API_URL,
-            headers={"API-KEY": SCREENER_API_KEY, "Content-Type": "application/json"},
-            params={"ticker": ticker},
-            timeout=10,
-        )
-        data = resp.json()
-        if data.get("status") == "success" and data.get("results"):
-            return data["results"][0].get("price")
-    except Exception as e:
-        print(f"Price API error for {ticker}: {e}")
-    return None
+    def _fetch():
+        try:
+            resp = requests.get(
+                SCREENER_API_URL,
+                headers={"API-KEY": SCREENER_API_KEY, "Content-Type": "application/json"},
+                params={"ticker": ticker},
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("status") == "success" and data.get("results"):
+                return data["results"][0].get("price")
+        except Exception as e:
+            print(f"Price API error for {ticker}: {e}")
+        return None
+    return _cached_fetch(f"price:{ticker}", _fetch)
 
 
 def fetch_in_play_dilution(ticker: str) -> tuple[list[dict], list[dict], float]:
     """Fetch dilution-data and split into in-play warrants and convertibles.
     Returns (warrants, convertibles, stock_price) filtered by price proximity and registration."""
-    price = fetch_last_price(ticker)
-    if price is None or price <= 0:
-        return [], [], 0.0
+    def _fetch():
+        price = fetch_last_price(ticker)
+        if price is None or price <= 0:
+            return [], [], 0.0
 
-    max_price = price * 4
+        max_price = price * 4
 
-    try:
-        resp = requests.get(
-            DILDATA_API_URL,
-            headers={"API-KEY": DILDATA_API_KEY, "Content-Type": "application/json"},
-            params={"ticker": ticker, "offset": 0, "limit": 40},
-            timeout=10,
-        )
-        data = resp.json()
-        if data.get("status") != "success":
+        try:
+            resp = requests.get(
+                DILDATA_API_URL,
+                headers={"API-KEY": DILDATA_API_KEY, "Content-Type": "application/json"},
+                params={"ticker": ticker, "offset": 0, "limit": 40},
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("status") != "success":
+                return [], [], price
+        except Exception as e:
+            print(f"Dilution-data API error for {ticker}: {e}")
             return [], [], price
-    except Exception as e:
-        print(f"Dilution-data API error for {ticker}: {e}")
-        return [], [], price
 
-    warrants = []
-    convertibles = []
-    from datetime import datetime, timedelta
-    six_months_ago = datetime.now() - timedelta(days=180)
+        warrants = []
+        convertibles = []
+        from datetime import datetime, timedelta
+        six_months_ago = datetime.now() - timedelta(days=180)
 
-    for item in data.get("results", []):
-        registered = item.get("registered") or ""
-        details_lower = (item.get("details") or "").lower()
-        is_warrant = "warrant" in details_lower or "option" in details_lower
+        for item in data.get("results", []):
+            registered = item.get("registered") or ""
+            details_lower = (item.get("details") or "").lower()
+            is_warrant = "warrant" in details_lower or "option" in details_lower
 
-        # Skip "Not Registered" items, but override for convertibles filed >6 months ago
-        skip_not_registered = "Not Registered" in registered
-        if skip_not_registered and not is_warrant:
-            filed_at_str = (item.get("filed_at") or "")[:10]
-            if filed_at_str:
-                try:
-                    if datetime.strptime(filed_at_str, "%Y-%m-%d") < six_months_ago:
-                        skip_not_registered = False
-                except ValueError:
-                    pass
-        if skip_not_registered:
-            continue
+            # Skip "Not Registered" items, but override for convertibles filed >6 months ago
+            skip_not_registered = "Not Registered" in registered
+            if skip_not_registered and not is_warrant:
+                filed_at_str = (item.get("filed_at") or "")[:10]
+                if filed_at_str:
+                    try:
+                        if datetime.strptime(filed_at_str, "%Y-%m-%d") < six_months_ago:
+                            skip_not_registered = False
+                    except ValueError:
+                        pass
+            if skip_not_registered:
+                continue
 
-        if is_warrant and item.get("warrants_exercise_price"):
-            if item["warrants_exercise_price"] <= max_price:
-                remaining = item.get("warrants_remaining", 0) or 0
-                if remaining > 0:
-                    warrants.append(item)
-        elif not is_warrant and item.get("conversion_price"):
-            if item["conversion_price"] <= max_price:
-                remaining = item.get("underlying_shares_remaining", 0) or 0
-                if remaining > 0:
-                    convertibles.append(item)
+            if is_warrant and item.get("warrants_exercise_price"):
+                if item["warrants_exercise_price"] <= max_price:
+                    remaining = item.get("warrants_remaining", 0) or 0
+                    if remaining > 0:
+                        warrants.append(item)
+            elif not is_warrant and item.get("conversion_price"):
+                if item["conversion_price"] <= max_price:
+                    remaining = item.get("underlying_shares_remaining", 0) or 0
+                    if remaining > 0:
+                        convertibles.append(item)
 
-    return warrants, convertibles, price
+        return warrants, convertibles, price
+    return _cached_fetch(f"inplay:{ticker}", _fetch) or ([], [], 0.0)
 
 
 def fetch_gap_stats(ticker: str) -> list[dict]:
     """Fetch gap-up stats for a ticker. Returns list of gap entries (date descending)."""
-    try:
-        resp = requests.get(
-            GAP_STATS_URL,
-            headers={"API-KEY": GAP_STATS_KEY, "Content-Type": "application/json"},
-            params={"ticker": ticker, "page": 1, "limit": 100},
-            timeout=10,
-        )
-        data = resp.json()
-        if data.get("status") == "success":
-            return data.get("results", [])
-    except Exception as e:
-        print(f"Gap stats API error for {ticker}: {e}")
-    return []
+    def _fetch():
+        try:
+            resp = requests.get(
+                GAP_STATS_URL,
+                headers={"API-KEY": GAP_STATS_KEY, "Content-Type": "application/json"},
+                params={"ticker": ticker, "page": 1, "limit": 100},
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("status") == "success":
+                return data.get("results", [])
+        except Exception as e:
+            print(f"Gap stats API error for {ticker}: {e}")
+        return []
+    return _cached_fetch(f"gapstats:{ticker}", _fetch) or []
 
 
 def fetch_offerings(ticker: str) -> list[dict]:
     """Fetch recent offerings for the ticker (up to 5)."""
-    try:
-        resp = requests.get(
-            OFFERINGS_API_URL,
-            headers={"API-KEY": OFFERINGS_API_KEY, "Content-Type": "application/json"},
-            params={"ticker": ticker, "limit": 5},
-            timeout=10,
-        )
-        data = resp.json()
-        if data.get("status") == "success":
-            return data.get("results", [])
-    except Exception as e:
-        print(f"Offerings API error for {ticker}: {e}")
-    return []
+    def _fetch():
+        try:
+            resp = requests.get(
+                OFFERINGS_API_URL,
+                headers={"API-KEY": OFFERINGS_API_KEY, "Content-Type": "application/json"},
+                params={"ticker": ticker, "limit": 5},
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("status") == "success":
+                return data.get("results", [])
+        except Exception as e:
+            print(f"Offerings API error for {ticker}: {e}")
+        return []
+    return _cached_fetch(f"offerings:{ticker}", _fetch) or []
 
 
 def fetch_ownership(ticker: str) -> dict | None:
     """Fetch ownership data – returns the latest reported_date group, or None."""
-    try:
-        resp = requests.get(
-            OWNERSHIP_API_URL,
-            headers={"API-KEY": OWNERSHIP_API_KEY, "Content-Type": "application/json"},
-            params={"ticker": ticker, "limit": 100},
-            timeout=10,
-        )
-        data = resp.json()
-        if data.get("status") == "success" and data.get("results"):
-            return data["results"][0]  # latest reported_date group
-    except Exception as e:
-        print(f"Ownership API error for {ticker}: {e}")
-    return None
+    def _fetch():
+        try:
+            resp = requests.get(
+                OWNERSHIP_API_URL,
+                headers={"API-KEY": OWNERSHIP_API_KEY, "Content-Type": "application/json"},
+                params={"ticker": ticker, "limit": 100},
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("status") == "success" and data.get("results"):
+                return data["results"][0]  # latest reported_date group
+        except Exception as e:
+            print(f"Ownership API error for {ticker}: {e}")
+        return None
+    return _cached_fetch(f"ownership:{ticker}", _fetch)
+
+
+def fetch_chart_analysis(ticker: str) -> dict | None:
+    """Fetch chart analysis (history rating). Returns first result dict or None."""
+    def _fetch():
+        try:
+            resp = requests.get(
+                CHART_ANALYSIS_URL,
+                headers={"API-KEY": CHART_ANALYSIS_KEY, "Content-Type": "application/json"},
+                params={"ticker": ticker, "limit": 1},
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("status") == "success" and data.get("results"):
+                return data["results"][0]
+        except Exception:
+            pass
+        return None
+    return _cached_fetch(f"chart:{ticker}", _fetch)
 
 
 def extract_headline(item: dict) -> str:
@@ -1548,21 +1591,9 @@ class DilutionOverlay:
             recent_offerings = fetch_offerings(ticker)
             ownership = fetch_ownership(ticker)
             # Fetch chart analysis for history badge
-            history_rating = ""
-            history_url = ""
-            try:
-                cresp = requests.get(
-                    CHART_ANALYSIS_URL,
-                    headers={"API-KEY": CHART_ANALYSIS_KEY, "Content-Type": "application/json"},
-                    params={"ticker": ticker, "limit": 1},
-                    timeout=10,
-                )
-                cdata = cresp.json()
-                if cdata.get("status") == "success" and cdata.get("results"):
-                    history_rating = cdata["results"][0].get("rating", "")
-                    history_url = cdata["results"][0].get("post_url", "")
-            except Exception:
-                pass
+            chart = fetch_chart_analysis(ticker)
+            history_rating = chart.get("rating", "") if chart else ""
+            history_url = chart.get("post_url", "") if chart else ""
             self.root.after(0, self._update_history_badge, history_rating, history_url)
             self.root.after(0, self._show_data, ticker, dilution or {}, floatdata,
                             news, grok_line, grok_date, grok_url, warrants, converts, stock_price,
