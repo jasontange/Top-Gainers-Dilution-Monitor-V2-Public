@@ -16,6 +16,7 @@ import requests
 import tkinter as tk
 import win32gui
 import re
+import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 
 # Load .env file if python-dotenv is installed
@@ -220,9 +221,28 @@ def fetch_top_gainers() -> list[dict]:
             "_tv_mcap": d[7] or 0,
         })
 
-    # Enrich with Ask Edgar data in parallel
+    # Enrich with yfinance real-time price + Ask Edgar data in parallel
     def enrich(item):
         ticker = item["ticker"]
+        # Real-time price from yfinance
+        try:
+            hist = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
+            if not hist.empty:
+                last = hist.iloc[-1]
+                live_price = last["Close"]
+                live_vol = int(hist["Volume"].sum())
+                prev_close = item.get("price", 0)  # TV premarket_close as reference
+                # Use previous day close from TradingView for accurate % calc
+                tv_pct = item.get("todaysChangePerc", 0)
+                if tv_pct and prev_close:
+                    prev_day_close = prev_close / (1 + tv_pct / 100)
+                    if prev_day_close > 0:
+                        item["todaysChangePerc"] = ((live_price - prev_day_close) / prev_day_close) * 100
+                item["price"] = live_price
+                if live_vol > 0:
+                    item["volume"] = live_vol
+        except Exception:
+            pass
         fdata = fetch_float_data(ticker)
         if fdata:
             item["_float"] = fdata.get("float")
