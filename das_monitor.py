@@ -50,18 +50,13 @@ OWNERSHIP_API_URL = "https://eapi.askedgar.io/v1/ownership"
 OWNERSHIP_API_KEY = ASKEDGAR_API_KEY
 POLL_INTERVAL = 1.0
 
-# Polygon / Market Data API
-POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY", "")
-POLYGON_GAINERS_URL = "https://api.massive.com/v2/snapshot/locale/us/markets/stocks/gainers"
-POLYGON_TICKER_URL = "https://api.massive.com/v3/reference/tickers"
+# TradingView Scanner API (no key required)
+TV_SCANNER_URL = "https://scanner.tradingview.com/america/scan"
 GAINERS_REFRESH_SECS = 60
 
-if not ASKEDGAR_API_KEY or not POLYGON_API_KEY:
-    print("ERROR: Missing API key(s). Copy .env.example to .env and fill in your keys.")
-    if not ASKEDGAR_API_KEY:
-        print("  ASKEDGAR_API_KEY - request trial at https://www.askedgar.io/api-trial")
-    if not POLYGON_API_KEY:
-        print("  POLYGON_API_KEY  - sign up at https://massive.com")
+if not ASKEDGAR_API_KEY:
+    print("ERROR: Missing API key. Copy .env.example to .env and fill in your key.")
+    print("  ASKEDGAR_API_KEY - request trial at https://www.askedgar.io/api-trial")
 
 # Ticker filter: 2-4 uppercase letters, no periods or special chars
 TICKER_RE = re.compile(r'^[A-Z]{2,4}$')
@@ -185,37 +180,49 @@ def find_tos_tickers() -> dict[int, list[str]]:
 
 # ── Market Data APIs ────────────────────────────────────────────────────────
 def fetch_top_gainers() -> list[dict]:
-    """Fetch top gainers, filter by ticker pattern (2-4 caps) and CS type."""
+    """Fetch top premarket gainers from TradingView, enriched with Ask Edgar data."""
     try:
-        resp = requests.get(
-            POLYGON_GAINERS_URL,
-            params={"apiKey": POLYGON_API_KEY},
+        resp = requests.post(
+            TV_SCANNER_URL,
+            json={
+                "markets": ["america"],
+                "symbols": {"query": {"types": ["stock"]}, "tickers": []},
+                "options": {"lang": "en"},
+                "columns": ["name", "close", "premarket_change", "premarket_change_abs",
+                             "premarket_close", "premarket_volume", "volume", "market_cap_basic"],
+                "sort": {"sortBy": "premarket_change", "sortOrder": "desc"},
+                "range": [0, 30],
+            },
             timeout=15,
         )
         data = resp.json()
-        tickers_data = data.get("tickers", [])
     except Exception as e:
-        print(f"Gainers API error: {e}")
+        print(f"TradingView scanner error: {e}")
         return []
 
-    # Filter by ticker pattern (2-4 uppercase letters, no periods/special chars)
-    filtered = [t for t in tickers_data if TICKER_RE.match(t.get("ticker", ""))]
+    # Convert TradingView response to our internal format
+    tickers_data = []
+    for row in data.get("data", []):
+        d = row.get("d", [])
+        if len(d) < 8:
+            continue
+        ticker = d[0]
+        if not TICKER_RE.match(ticker):
+            continue
+        pct = d[2] or 0
+        if pct <= 0:
+            continue  # only gainers
+        tickers_data.append({
+            "ticker": ticker,
+            "todaysChangePerc": pct,
+            "price": d[4] or d[1] or 0,          # premarket_close, fallback to close
+            "volume": d[5] or d[6] or 0,          # premarket_volume, fallback to volume
+            "_tv_mcap": d[7] or 0,
+        })
 
-    # Check type == CS and fetch float data in parallel
-    def check_cs_and_float(item):
+    # Enrich with Ask Edgar data in parallel
+    def enrich(item):
         ticker = item["ticker"]
-        try:
-            resp = requests.get(
-                f"{POLYGON_TICKER_URL}/{ticker}",
-                params={"apiKey": POLYGON_API_KEY},
-                timeout=10,
-            )
-            data = resp.json()
-            if data.get("results", {}).get("type") != "CS":
-                return None
-        except Exception:
-            return None
-        # Fetch float/sector/country and dilution risk from Ask Edgar
         fdata = fetch_float_data(ticker)
         if fdata:
             item["_float"] = fdata.get("float")
@@ -225,7 +232,7 @@ def fetch_top_gainers() -> list[dict]:
         ddata = fetch_dilution_data(ticker)
         if ddata:
             item["_risk"] = ddata.get("overall_offering_risk", "")
-        # Fetch chart analysis (gap history rating)
+        # Chart analysis (history rating)
         try:
             cresp = requests.get(
                 CHART_ANALYSIS_URL,
@@ -238,7 +245,7 @@ def fetch_top_gainers() -> list[dict]:
                 item["_history"] = cdata["results"][0].get("rating", "")
         except Exception:
             pass
-        # Check for news/filings today (not grok)
+        # Check for news/filings today
         from datetime import datetime
         today = datetime.now().strftime("%Y-%m-%d")
         try:
@@ -261,17 +268,17 @@ def fetch_top_gainers() -> list[dict]:
             pass
         return item
 
-    cs_gainers = []
+    enriched = []
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(check_cs_and_float, item): item for item in filtered[:30]}
+        futures = {executor.submit(enrich, item): item for item in tickers_data[:30]}
         for future in futures:
             result = future.result()
             if result is not None:
-                cs_gainers.append(result)
+                enriched.append(result)
 
     # Sort by change percentage descending
-    cs_gainers.sort(key=lambda x: x.get("todaysChangePerc", 0), reverse=True)
-    return cs_gainers
+    enriched.sort(key=lambda x: x.get("todaysChangePerc", 0), reverse=True)
+    return enriched
 
 
 # ── Ask Edgar APIs ──────────────────────────────────────────────────────────
@@ -1341,8 +1348,8 @@ class DilutionOverlay:
         """Build a single clickable gainer row."""
         ticker = item.get("ticker", "")
         change_pct = item.get("todaysChangePerc", 0)
-        price = item.get("day", {}).get("c", 0) or item.get("lastTrade", {}).get("p", 0) or 0
-        volume = item.get("day", {}).get("v", 0) or item.get("min", {}).get("av", 0) or 0
+        price = item.get("price", 0) or 0
+        volume = item.get("volume", 0) or 0
 
         is_selected = (ticker == self._selected_gainer)
         row_bg = BG_SELECTED if is_selected else BG_CARD
