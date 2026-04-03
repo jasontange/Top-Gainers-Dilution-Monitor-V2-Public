@@ -233,9 +233,15 @@ def fetch_top_gainers() -> list[dict]:
         ticker = row.get("name", "")
         if not TICKER_RE.match(ticker):
             continue
+        # Extract exchange from "NASDAQ:SKYQ" format
+        exchange = ""
+        full_ticker = row.get("ticker", "")
+        if ":" in full_ticker:
+            exchange = full_ticker.split(":")[0]
         pct = row.get("premarket_change") or 0
         tickers_data.append({
             "ticker": ticker,
+            "_exchange": exchange,
             "todaysChangePerc": pct,
             "price": row.get("premarket_close") or row.get("close") or 0,
             "volume": int(row.get("premarket_volume") or row.get("volume") or 0),
@@ -1434,6 +1440,10 @@ class DilutionOverlay:
 
         tk.Label(mid, text=fmt_price(price), fg=FG, bg=row_bg,
                  font=FONT_GAINER_DETAIL, cursor="hand2").pack(side="left")
+        exchange = item.get("_exchange", "")
+        if exchange:
+            tk.Label(mid, text=f" {exchange}", fg=FG_DIM, bg=row_bg,
+                     font=("Consolas", 7), cursor="hand2").pack(side="left")
         tk.Label(mid, text=f"Vol {fmt_volume(volume)}", fg=FG_DIM, bg=row_bg,
                  font=FONT_GAINER_DETAIL, cursor="hand2").pack(side="right")
 
