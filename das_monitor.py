@@ -16,7 +16,6 @@ import requests
 import tkinter as tk
 import win32gui
 import re
-import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 
 # Load .env file if python-dotenv is installed
@@ -51,8 +50,8 @@ OWNERSHIP_API_URL = "https://eapi.askedgar.io/v1/ownership"
 OWNERSHIP_API_KEY = ASKEDGAR_API_KEY
 POLL_INTERVAL = 1.0
 
-# TradingView Scanner API (no key required)
-TV_SCANNER_URL = "https://scanner.tradingview.com/america/scan"
+# TradingView real-time data (session cookie for live prices)
+TRADINGVIEW_SESSION_ID = os.environ.get("TRADINGVIEW_SESSION_ID", "")
 GAINERS_REFRESH_SECS = 60
 MIN_GAINER_PCT = 15  # minimum % change to show in gainers list
 
@@ -199,69 +198,53 @@ def find_tos_tickers() -> dict[int, list[str]]:
 
 
 # ── Market Data APIs ────────────────────────────────────────────────────────
+def _tv_cookies():
+    """Build TradingView cookie jar for real-time data."""
+    jar = requests.cookies.RequestsCookieJar()
+    if TRADINGVIEW_SESSION_ID:
+        jar.set("sessionid", TRADINGVIEW_SESSION_ID, domain=".tradingview.com")
+    return jar
+
+
 def fetch_top_gainers() -> list[dict]:
-    """Fetch top premarket gainers from TradingView, enriched with Ask Edgar data."""
+    """Fetch top premarket gainers from TradingView (real-time), enriched with Ask Edgar data."""
     try:
-        resp = requests.post(
-            TV_SCANNER_URL,
-            json={
-                "markets": ["america"],
-                "symbols": {"query": {"types": ["stock"]}, "tickers": []},
-                "options": {"lang": "en"},
-                "columns": ["name", "close", "premarket_change", "premarket_change_abs",
-                             "premarket_close", "premarket_volume", "volume", "market_cap_basic"],
-                "sort": {"sortBy": "premarket_change", "sortOrder": "desc"},
-                "range": [0, 30],
-            },
-            timeout=15,
-        )
-        data = resp.json()
+        from tradingview_screener import Query, col
+    except ImportError:
+        print("tradingview-screener not installed. Run: pip install tradingview-screener")
+        return []
+
+    try:
+        cookies = _tv_cookies()
+        _, df = (Query()
+            .select("name", "close", "premarket_change", "premarket_close",
+                    "premarket_volume", "volume", "market_cap_basic")
+            .where(col("premarket_change") > MIN_GAINER_PCT)
+            .order_by("premarket_change", ascending=False)
+            .limit(30)
+            .get_scanner_data(cookies=cookies if TRADINGVIEW_SESSION_ID else None))
     except Exception as e:
         print(f"TradingView scanner error: {e}")
         return []
 
-    # Convert TradingView response to our internal format
+    # Convert DataFrame to our internal format
     tickers_data = []
-    for row in data.get("data", []):
-        d = row.get("d", [])
-        if len(d) < 8:
-            continue
-        ticker = d[0]
+    for _, row in df.iterrows():
+        ticker = row.get("name", "")
         if not TICKER_RE.match(ticker):
             continue
-        pct = d[2] or 0
-        if pct < MIN_GAINER_PCT:
-            continue  # only significant gainers
+        pct = row.get("premarket_change") or 0
         tickers_data.append({
             "ticker": ticker,
             "todaysChangePerc": pct,
-            "price": d[4] or d[1] or 0,          # premarket_close, fallback to close
-            "volume": d[5] or d[6] or 0,          # premarket_volume, fallback to volume
-            "_tv_mcap": d[7] or 0,
+            "price": row.get("premarket_close") or row.get("close") or 0,
+            "volume": int(row.get("premarket_volume") or row.get("volume") or 0),
+            "_tv_mcap": row.get("market_cap_basic") or 0,
         })
 
-    # Enrich with yfinance real-time price + Ask Edgar data in parallel
+    # Enrich with Ask Edgar data in parallel
     def enrich(item):
         ticker = item["ticker"]
-        # Real-time price from yfinance
-        try:
-            hist = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
-            if not hist.empty:
-                last = hist.iloc[-1]
-                live_price = last["Close"]
-                live_vol = int(hist["Volume"].sum())
-                prev_close = item.get("price", 0)  # TV premarket_close as reference
-                # Use previous day close from TradingView for accurate % calc
-                tv_pct = item.get("todaysChangePerc", 0)
-                if tv_pct and prev_close:
-                    prev_day_close = prev_close / (1 + tv_pct / 100)
-                    if prev_day_close > 0:
-                        item["todaysChangePerc"] = ((live_price - prev_day_close) / prev_day_close) * 100
-                item["price"] = live_price
-                if live_vol > 0:
-                    item["volume"] = live_vol
-        except Exception:
-            pass
         fdata = fetch_float_data(ticker)
         if fdata:
             item["_float"] = fdata.get("float")
@@ -271,7 +254,6 @@ def fetch_top_gainers() -> list[dict]:
         ddata = fetch_dilution_data(ticker)
         if ddata:
             item["_risk"] = ddata.get("overall_offering_risk", "")
-        # Chart analysis (history rating)
         chart = fetch_chart_analysis(ticker)
         if chart:
             item["_history"] = chart.get("rating", "")
@@ -306,7 +288,6 @@ def fetch_top_gainers() -> list[dict]:
             if result is not None:
                 enriched.append(result)
 
-    # Sort by change percentage descending
     enriched.sort(key=lambda x: x.get("todaysChangePerc", 0), reverse=True)
     return enriched
 

@@ -4,7 +4,7 @@ A real-time desktop overlay that monitors your trading platform for ticker chang
 
 When you switch tickers in DAS Trader Pro or thinkorswim, the overlay automatically fetches and shows:
 
-- **Top Gainers panel** – Pre-market/intraday gainers filtered to common stock tickers, with Ask Edgar dilution data
+- **Top Gainers panel** – Real-time pre-market/intraday gainers with Ask Edgar dilution data
 - **Dilution risk ratings** – Overall risk, offering ability, dilution level, frequency, cash need, warrants
 - **Float & outstanding shares** – With market cap, sector, and country
 - **Recent news & SEC filings** – 8-K, 6-K, and news headlines with clickable links
@@ -15,6 +15,7 @@ When you switch tickers in DAS Trader Pro or thinkorswim, the overlay automatica
 - **Gap statistics** – Gap-up performance metrics with color-coded thresholds
 - **JMT415 analyst notes** – Recent analyst commentary
 - **Management commentary** – From Ask Edgar's dilution analysis
+- **Ownership data** – Latest reported insider/institutional holdings
 
 ## What It Looks Like
 
@@ -33,16 +34,7 @@ The app runs as a dark-themed, always-on-top overlay with two panels. The left p
 | **OS** | Windows only (uses `win32gui` for window detection) |
 | **Python** | 3.10+ |
 | **Trading Platforms** | DAS Trader Pro, thinkorswim (TD Ameritrade / Charles Schwab) |
-| **API Access** | [Ask Edgar](https://www.askedgar.io/api-trial) API key + [Massive](https://massive.com) API key |
-
-### How Platform Detection Works
-
-- **DAS Trader Pro**: Monitors montage windows (`TICKER     0 -- 0     Company Name...`) and chart windows (`TICKER--5 Minute--`). Any ticker change in any montage or chart window triggers the overlay.
-- **thinkorswim**: Monitors detached chart windows (`PRSO, MOBX, TURB - Charts - ...`). When a new ticker is entered in a chart tab, the overlay picks it up.
-
-The app polls window titles every 1 second and detects when a ticker changes.
-
-**ToS limitations**: Only *detached* chart windows are detected — charts embedded in the main ToS window (`Main@thinkorswim`) don't expose the active ticker in their window title. Switching between existing chart tabs also won't trigger a change since all tab tickers are always listed in the title. For best results with ToS, use detached chart windows and enter new tickers rather than clicking existing tabs.
+| **API Access** | [Ask Edgar](https://www.askedgar.io/api-trial) API key (required) + [TradingView](https://www.tradingview.com) account (free, for real-time prices) |
 
 ## Getting Started (Recommended: Use an AI Coding Assistant)
 
@@ -64,21 +56,29 @@ Claude will:
 - Clone the repo to your machine
 - Install **Python** if needed
 - Install all required packages (`pip install -r requirements.txt`)
-- Create your `.env` file and walk you through adding your API keys
+- Create your `.env` file and walk you through adding your API key and TradingView session cookie
 - Launch the app for you
 
-### Step 3: Get your API keys
+### Step 3: Get your Ask Edgar API key
 
-You'll need two API keys:
+Request a free trial key at [askedgar.io/api-trial](https://www.askedgar.io/api-trial) — one key works for all endpoints.
 
-| Key | Where to get it |
-|---|---|
-| **Ask Edgar API** | Request a free trial at [askedgar.io/api-trial](https://www.askedgar.io/api-trial) — one key works for all endpoints |
-| **Massive API** | Sign up at [massive.com](https://massive.com) for market data (top gainers) |
+Claude will prompt you to paste it into your `.env` file during setup.
 
-Claude will prompt you to paste these into your `.env` file during setup.
+### Step 4: Set up real-time prices (optional but recommended)
 
-### Step 4: Customize it
+The top gainers panel uses TradingView for price data. Without a session cookie, prices are 15 minutes delayed. To get **real-time prices**:
+
+1. Log into [tradingview.com](https://www.tradingview.com) in Chrome (a free account works)
+2. Press **F12** to open Developer Tools
+3. Click the **Application** tab at the top
+4. In the left sidebar, click **Cookies** → `https://www.tradingview.com`
+5. Find the row named **`sessionid`** and copy the **Value**
+6. Paste it into your `.env` file as: `TRADINGVIEW_SESSION_ID=paste_your_value_here`
+
+This only needs to be done once — the cookie lasts for months.
+
+### Step 5: Customize it
 
 Once it's running, you can ask Claude to make changes:
 
@@ -105,32 +105,40 @@ Click the green **"Code"** button at the top of this page, then click **"Downloa
 
 Extract the ZIP file to a folder on your computer (e.g. your Desktop).
 
-### 3. Run the setup
+### 3. Install dependencies
 
-Open the extracted folder and **double-click `setup.bat`**. This will:
-- Install the required Python packages
-- Create a `.env` file for your API keys
+Open a command prompt in the extracted folder and run:
 
-### 4. Add your API keys
+```
+pip install -r requirements.txt
+```
 
-Open the `.env` file (in the same folder) with Notepad and add your keys:
+### 4. Add your API key
+
+Copy `.env.example` to `.env` and fill in your keys:
 
 ```
 ASKEDGAR_API_KEY=paste_your_askedgar_key_here
-POLYGON_API_KEY=paste_your_massive_key_here
+TRADINGVIEW_SESSION_ID=paste_your_session_id_here
 ```
 
-**Don't have keys?**
+**Don't have a key?**
 - Ask Edgar: Request a free trial at [askedgar.io/api-trial](https://www.askedgar.io/api-trial)
-- Massive: Sign up at [massive.com](https://massive.com)
+
+**TradingView session cookie** (for real-time prices):
+1. Log into tradingview.com in Chrome
+2. Press F12 → Application → Cookies → `https://www.tradingview.com`
+3. Copy the `sessionid` value
 
 ### 5. Launch the app
 
-**Double-click `run.bat`** to start the overlay.
+```
+python das_monitor.py
+```
+
+Or double-click `run.bat`.
 
 Open DAS Trader Pro or thinkorswim alongside it. Click on a ticker and the data loads automatically.
-
-To stop the app, just close the overlay window (click the X) or close the command prompt window that opened with it.
 
 </details>
 
@@ -142,7 +150,7 @@ git clone https://github.com/jasontange/Top-Gainers-Dilution-Monitor-V2-Public.g
 cd Top-Gainers-Dilution-Monitor-V2-Public
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env with your API keys
+# Edit .env with your API key and TradingView session cookie
 python das_monitor.py
 ```
 
@@ -172,6 +180,7 @@ The AI will need to know how your platform formats its window titles. You can fi
 
 - **Python 3.10+** with tkinter (built-in GUI)
 - **win32gui** (pywin32) for Windows window enumeration
+- **tradingview-screener** for real-time market data
 - **requests** for API calls
 - **python-dotenv** for loading `.env` files
 

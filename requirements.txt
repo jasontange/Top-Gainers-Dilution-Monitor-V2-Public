@@ -1,4 +1,4 @@
 requests
 pywin32
 python-dotenv
-yfinance
+tradingview-screener
