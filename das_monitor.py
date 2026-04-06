@@ -260,9 +260,6 @@ def fetch_top_gainers() -> list[dict]:
         ddata = fetch_dilution_data(ticker)
         if ddata:
             item["_risk"] = ddata.get("overall_offering_risk", "")
-        chart = fetch_chart_analysis(ticker)
-        if chart:
-            item["_history"] = chart.get("rating", "")
         # Check for news/filings today
         from datetime import datetime
         today = datetime.now().strftime("%Y-%m-%d")
@@ -287,7 +284,7 @@ def fetch_top_gainers() -> list[dict]:
         return item
 
     enriched = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {executor.submit(enrich, item): item for item in tickers_data[:30]}
         for future in futures:
             result = future.result()
