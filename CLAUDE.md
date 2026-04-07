@@ -112,7 +112,7 @@ All Ask Edgar endpoints use the same API key via `API-KEY` header.
 
 ### API Caching:
 
-All Ask Edgar endpoints (except news) are cached for 30 minutes per ticker using `_cached_fetch()`. News (`fetch_news_and_grok`) is always live. Cache is in-memory only — cleared on app restart. Failed requests (returning `None`) are not cached so they retry on next request.
+All Ask Edgar endpoints are cached for 30 minutes per ticker using `_cached_fetch()`. Cache is in-memory only — cleared on app restart. Failed requests (returning `None`) are not cached so they retry on next request.
 
 ## Common Issues
 
