@@ -57,17 +57,18 @@ MIN_GAINER_PCT = 15  # minimum % change to show in gainers list
 CACHE_TTL_SECS = 1800  # 30 minutes
 _api_cache = {}  # key -> (timestamp, data)
 
+_CACHE_SENTINEL = "__no_data__"
+
 def _cached_fetch(cache_key: str, fetch_fn, ttl: int = CACHE_TTL_SECS):
     """Return cached result if fresh, otherwise call fetch_fn and cache it.
-    Does NOT cache None results (transient errors should be retried)."""
+    Caches None results as well (no-data responses) to avoid redundant API calls."""
     now = time.time()
     if cache_key in _api_cache:
         ts, data = _api_cache[cache_key]
         if now - ts < ttl:
-            return data
+            return None if data is _CACHE_SENTINEL else data
     data = fetch_fn()
-    if data is not None:
-        _api_cache[cache_key] = (now, data)
+    _api_cache[cache_key] = (now, _CACHE_SENTINEL if data is None else data)
     return data
 
 if not ASKEDGAR_API_KEY:
