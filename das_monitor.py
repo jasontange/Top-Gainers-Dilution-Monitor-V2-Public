@@ -32,8 +32,6 @@ ASKEDGAR_API_KEY = os.environ.get("ASKEDGAR_API_KEY", "")
 
 DILUTION_API_URL = "https://eapi.askedgar.io/enterprise/v1/dilution-rating"
 DILUTION_API_KEY = ASKEDGAR_API_KEY
-FLOAT_API_URL = "https://eapi.askedgar.io/enterprise/v1/float-outstanding"
-FLOAT_API_KEY = ASKEDGAR_API_KEY
 NEWS_API_URL = "https://eapi.askedgar.io/enterprise/v1/news"
 NEWS_API_KEY = ASKEDGAR_API_KEY
 DILDATA_API_URL = "https://eapi.askedgar.io/enterprise/v1/dilution-data"
@@ -248,17 +246,18 @@ def fetch_top_gainers() -> list[dict]:
         })
 
     # Enrich with Ask Edgar data in parallel
-    def enrich(item):
+    def enrich(item, include_dilution=False):
         ticker = item["ticker"]
-        fdata = fetch_float_data(ticker)
-        if fdata:
-            item["_float"] = fdata.get("float")
-            item["_mcap"] = fdata.get("market_cap_final")
-            item["_sector"] = fdata.get("sector", "")
-            item["_country"] = fdata.get("country", "")
-        ddata = fetch_dilution_data(ticker)
-        if ddata:
-            item["_risk"] = ddata.get("overall_offering_risk", "")
+        sdata = fetch_screener_data(ticker)
+        if sdata:
+            item["_float"] = sdata.get("tradable_float")
+            item["_mcap"] = sdata.get("market_cap")
+            item["_sector"] = sdata.get("sector", "")
+            item["_country"] = sdata.get("country", "")
+        if include_dilution:
+            ddata = fetch_dilution_data(ticker)
+            if ddata:
+                item["_risk"] = ddata.get("overall_offering_risk", "")
         # Check for news/filings today (uses cached news data)
         from datetime import datetime
         today = datetime.now().strftime("%Y-%m-%d")
@@ -275,7 +274,7 @@ def fetch_top_gainers() -> list[dict]:
 
     enriched = []
     with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(enrich, item): item for item in tickers_data[:30]}
+        futures = {executor.submit(enrich, item, i < 10): item for i, item in enumerate(tickers_data[:30])}
         for future in futures:
             result = future.result()
             if result is not None:
@@ -298,28 +297,13 @@ def fetch_dilution_data(ticker: str) -> dict | None:
             data = resp.json()
             if data.get("status") == "success" and data.get("results"):
                 return data["results"][0]
+            else:
+                print(f"Dilution API [{resp.status_code}] {ticker}: {data}")
         except Exception as e:
             print(f"Dilution API error for {ticker}: {e}")
         return None
     return _cached_fetch(f"dilution:{ticker}", _fetch)
 
-
-def fetch_float_data(ticker: str) -> dict | None:
-    def _fetch():
-        try:
-            resp = requests.get(
-                FLOAT_API_URL,
-                headers={"API-KEY": FLOAT_API_KEY, "Content-Type": "application/json"},
-                params={"ticker": ticker, "offset": 0, "limit": 100},
-                timeout=10,
-            )
-            data = resp.json()
-            if data.get("status") == "success" and data.get("results"):
-                return data["results"][0]
-        except Exception as e:
-            print(f"Float API error for {ticker}: {e}")
-        return None
-    return _cached_fetch(f"float:{ticker}", _fetch)
 
 
 def _cached_news_results(ticker: str) -> list[dict] | None:
@@ -369,8 +353,8 @@ def fetch_news_and_grok(ticker: str) -> tuple[list[dict], str | None, str | None
     return headlines, grok_line, grok_date, grok_url, jmt415_notes
 
 
-def fetch_last_price(ticker: str) -> float | None:
-    """Fetch last price via Ask Edgar screener endpoint."""
+def fetch_screener_data(ticker: str) -> dict | None:
+    """Fetch screener data (price, float, outstanding, sector, country, mcap) via Ask Edgar screener endpoint."""
     def _fetch():
         try:
             resp = requests.get(
@@ -381,18 +365,21 @@ def fetch_last_price(ticker: str) -> float | None:
             )
             data = resp.json()
             if data.get("status") == "success" and data.get("results"):
-                return data["results"][0].get("price")
+                return data["results"][0]
+            else:
+                print(f"Screener API [{resp.status_code}] {ticker}: {data}")
         except Exception as e:
-            print(f"Price API error for {ticker}: {e}")
+            print(f"Screener API error for {ticker}: {e}")
         return None
-    return _cached_fetch(f"price:{ticker}", _fetch)
+    return _cached_fetch(f"screener:{ticker}", _fetch)
 
 
 def fetch_in_play_dilution(ticker: str) -> tuple[list[dict], list[dict], float]:
     """Fetch dilution-data and split into in-play warrants and convertibles.
     Returns (warrants, convertibles, stock_price) filtered by price proximity and registration."""
     def _fetch():
-        price = fetch_last_price(ticker)
+        sdata = fetch_screener_data(ticker)
+        price = sdata.get("price") if sdata else None
         if price is None or price <= 0:
             return [], [], 0.0
 
@@ -407,6 +394,7 @@ def fetch_in_play_dilution(ticker: str) -> tuple[list[dict], list[dict], float]:
             )
             data = resp.json()
             if data.get("status") != "success":
+                print(f"Dilution-data API [{resp.status_code}] {ticker}: {data}")
                 return [], [], price
         except Exception as e:
             print(f"Dilution-data API error for {ticker}: {e}")
@@ -463,6 +451,8 @@ def fetch_gap_stats(ticker: str) -> list[dict]:
             data = resp.json()
             if data.get("status") == "success":
                 return data.get("results", [])
+            else:
+                print(f"Gap stats API [{resp.status_code}] {ticker}: {data}")
         except Exception as e:
             print(f"Gap stats API error for {ticker}: {e}")
         return []
@@ -482,6 +472,8 @@ def fetch_offerings(ticker: str) -> list[dict]:
             data = resp.json()
             if data.get("status") == "success":
                 return data.get("results", [])
+            else:
+                print(f"Offerings API [{resp.status_code}] {ticker}: {data}")
         except Exception as e:
             print(f"Offerings API error for {ticker}: {e}")
         return []
@@ -501,6 +493,8 @@ def fetch_ownership(ticker: str) -> dict | None:
             data = resp.json()
             if data.get("status") == "success" and data.get("results"):
                 return data["results"][0]  # latest reported_date group
+            else:
+                print(f"Ownership API [{resp.status_code}] {ticker}: {data}")
         except Exception as e:
             print(f"Ownership API error for {ticker}: {e}")
         return None
@@ -520,8 +514,10 @@ def fetch_chart_analysis(ticker: str) -> dict | None:
             data = resp.json()
             if data.get("status") == "success" and data.get("results"):
                 return data["results"][0]
-        except Exception:
-            pass
+            else:
+                print(f"Chart API [{resp.status_code}] {ticker}: {data}")
+        except Exception as e:
+            print(f"Chart API error for {ticker}: {e}")
         return None
     return _cached_fetch(f"chart:{ticker}", _fetch)
 
@@ -816,11 +812,11 @@ class DilutionOverlay:
         else:
             self.overall_badge.config(text="NO DATA", bg="#4A525C")
 
-        # ── Info line from float data ──
+        # ── Info line from screener data ──
         if floatdata:
-            flt = fmt_millions(floatdata.get("float"))
+            flt = fmt_millions(floatdata.get("tradable_float"))
             outs = fmt_millions(floatdata.get("outstanding"))
-            mc = fmt_millions(floatdata.get("market_cap_final"))
+            mc = fmt_millions(floatdata.get("market_cap"))
             sector = floatdata.get("sector", "")
             country = floatdata.get("country", "")
             self.info_label.config(
@@ -1572,7 +1568,7 @@ class DilutionOverlay:
 
         def fetch():
             dilution = fetch_dilution_data(ticker)
-            floatdata = fetch_float_data(ticker)
+            screener = fetch_screener_data(ticker)
             news, grok_line, grok_date, grok_url, jmt415_notes = fetch_news_and_grok(ticker)
             warrants, converts, stock_price = fetch_in_play_dilution(ticker)
             gap_stats = fetch_gap_stats(ticker)
@@ -1583,7 +1579,7 @@ class DilutionOverlay:
             history_rating = chart.get("rating", "") if chart else ""
             history_url = chart.get("post_url", "") if chart else ""
             self.root.after(0, self._update_history_badge, history_rating, history_url)
-            self.root.after(0, self._show_data, ticker, dilution or {}, floatdata,
+            self.root.after(0, self._show_data, ticker, dilution or {}, screener,
                             news, grok_line, grok_date, grok_url, warrants, converts, stock_price,
                             jmt415_notes, gap_stats, recent_offerings, ownership)
 
