@@ -46,6 +46,8 @@ OFFERINGS_API_URL = "https://eapi.askedgar.io/v1/offerings"
 OFFERINGS_API_KEY = ASKEDGAR_API_KEY
 OWNERSHIP_API_URL = "https://eapi.askedgar.io/v1/ownership"
 OWNERSHIP_API_KEY = ASKEDGAR_API_KEY
+SPLIT_STATUS_URL = "https://eapi.askedgar.io/v1/split-status"
+SPLIT_STATUS_KEY = ASKEDGAR_API_KEY
 POLL_INTERVAL = 1.0
 
 # TradingView real-time data (session cookie for live prices)
@@ -502,6 +504,27 @@ def fetch_ownership(ticker: str) -> dict | None:
     return _cached_fetch(f"ownership:{ticker}", _fetch)
 
 
+def fetch_split_status(ticker: str) -> list[dict]:
+    """Fetch reverse split status history for the ticker."""
+    def _fetch():
+        try:
+            resp = requests.get(
+                SPLIT_STATUS_URL,
+                headers={"API-KEY": SPLIT_STATUS_KEY, "Content-Type": "application/json"},
+                params={"ticker": ticker, "limit": 10},
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("status") == "success":
+                return data.get("results", [])
+            else:
+                print(f"Split status API [{resp.status_code}] {ticker}: {data}")
+        except Exception as e:
+            print(f"Split status API error for {ticker}: {e}")
+        return []
+    return _cached_fetch(f"splitstatus:{ticker}", _fetch) or []
+
+
 def fetch_chart_analysis(ticker: str) -> dict | None:
     """Fetch chart analysis (history rating). Returns first result dict or None."""
     def _fetch():
@@ -801,7 +824,8 @@ class DilutionOverlay:
                    jmt415_notes: list[dict] | None = None,
                    gap_stats: list[dict] | None = None,
                    offerings: list[dict] | None = None,
-                   ownership: dict | None = None):
+                   ownership: dict | None = None,
+                   split_status: list[dict] | None = None):
         self._clear()
 
         dilution_url = f"https://app.askedgar.io/ticker/{ticker}/dilution"
@@ -877,6 +901,10 @@ class DilutionOverlay:
         # ── In Play Dilution card ──
         if in_play_warrants or in_play_converts:
             self._add_in_play_section(in_play_warrants or [], in_play_converts or [], stock_price, dilution_url)
+
+        # ── Reverse Split Status card ──
+        if split_status:
+            self._add_split_status_card(split_status, url=dilution_url)
 
         # ── Recent Offerings card ──
         if offerings:
@@ -1325,6 +1353,59 @@ class DilutionOverlay:
         if dilution_url:
             self._bind_card_click(card, dilution_url)
 
+    def _add_split_status_card(self, splits: list[dict], url: str = ""):
+        """Reverse Split Status card showing split process history."""
+        card = self._make_card(self.content_frame, title="Reverse Split Status")
+        body = tk.Frame(card, bg=BG_CARD, padx=14, pady=10)
+        body.pack(fill="x")
+
+        for i, s in enumerate(splits):
+            row_bg = BG_ROW if i % 2 == 0 else BG_ROW_ALT
+            row = tk.Frame(body, bg=row_bg,
+                           highlightbackground=BORDER_INNER, highlightthickness=1)
+            row.pack(fill="x", pady=2)
+            inner = tk.Frame(row, bg=row_bg, padx=10, pady=6)
+            inner.pack(fill="x")
+
+            # Line 1: action type
+            action = s.get("action_type", "")
+            if "Pending" in action:
+                type_color = "#FF9800"  # orange
+            elif "Approved" in action:
+                type_color = RED
+            elif "Announced" in action:
+                type_color = RED
+            else:
+                type_color = FG
+            tk.Label(inner, text=action, fg=type_color, bg=row_bg,
+                     font=FONT_MONO_BOLD, anchor="w").pack(fill="x")
+
+            # Line 2: dates
+            date_row = tk.Frame(inner, bg=row_bg)
+            date_row.pack(fill="x", pady=(2, 0))
+            parts = []
+            eff = (s.get("effective_date") or "")[:10]
+            vote = (s.get("vote_date") or "")[:10]
+            appr = (s.get("approved_date") or "")[:10]
+            filed = (s.get("filed_at") or "")[:10]
+            if eff:
+                parts.append(f"Eff: {eff}")
+            if vote:
+                parts.append(f"Vote: {vote}")
+            if appr:
+                parts.append(f"Appr: {appr}")
+            if filed:
+                parts.append(f"Filed: {filed}")
+            for j, part in enumerate(parts):
+                if j > 0:
+                    tk.Label(date_row, text=" | ", fg=FG_DIM, bg=row_bg,
+                             font=FONT_MONO).pack(side="left")
+                tk.Label(date_row, text=part, fg=FG_DIM, bg=row_bg,
+                         font=FONT_MONO).pack(side="left")
+
+        if url:
+            self._bind_card_click(card, url)
+
     def _add_dilution_row(self, parent, details, remaining, price, filed,
                           price_above=False):
         # Green if strike/conv price <= stock price (in the money), orange otherwise
@@ -1575,6 +1656,7 @@ class DilutionOverlay:
             gap_stats = fetch_gap_stats(ticker)
             recent_offerings = fetch_offerings(ticker)
             ownership = fetch_ownership(ticker)
+            split_status = fetch_split_status(ticker)
             # Fetch chart analysis for history badge
             chart = fetch_chart_analysis(ticker)
             history_rating = chart.get("rating", "") if chart else ""
@@ -1582,7 +1664,7 @@ class DilutionOverlay:
             self.root.after(0, self._update_history_badge, history_rating, history_url)
             self.root.after(0, self._show_data, ticker, dilution or {}, screener,
                             news, grok_line, grok_date, grok_url, warrants, converts, stock_price,
-                            jmt415_notes, gap_stats, recent_offerings, ownership)
+                            jmt415_notes, gap_stats, recent_offerings, ownership, split_status)
 
         threading.Thread(target=fetch, daemon=True).start()
 
