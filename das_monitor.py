@@ -249,14 +249,15 @@ def fetch_top_gainers() -> list[dict]:
         })
 
     # Enrich with Ask Edgar data in parallel
-    def enrich(item, include_dilution=False):
+    def enrich(item, include_screener=False, include_dilution=False):
         ticker = item["ticker"]
-        sdata = fetch_screener_data(ticker)
-        if sdata:
-            item["_float"] = sdata.get("tradable_float")
-            item["_mcap"] = sdata.get("market_cap")
-            item["_sector"] = sdata.get("sector", "")
-            item["_country"] = sdata.get("country", "")
+        if include_screener:
+            sdata = fetch_screener_data(ticker)
+            if sdata:
+                item["_float"] = sdata.get("tradable_float")
+                item["_mcap"] = sdata.get("market_cap")
+                item["_sector"] = sdata.get("sector", "")
+                item["_country"] = sdata.get("country", "")
         if include_dilution:
             ddata = fetch_dilution_data(ticker)
             if ddata:
@@ -277,7 +278,7 @@ def fetch_top_gainers() -> list[dict]:
 
     enriched = []
     with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(enrich, item, i < 10): item for i, item in enumerate(tickers_data[:30])}
+        futures = {executor.submit(enrich, item, i < 10, i < 10): item for i, item in enumerate(tickers_data[:30])}
         for future in futures:
             result = future.result()
             if result is not None:
@@ -426,13 +427,15 @@ def fetch_in_play_dilution(ticker: str) -> tuple[list[dict], list[dict], float]:
             if skip_not_registered:
                 continue
 
+            has_variable_rate = "Variable" in (item.get("price_protection") or "")
+
             if is_warrant and item.get("warrants_exercise_price"):
-                if item["warrants_exercise_price"] <= max_price:
+                if item["warrants_exercise_price"] <= max_price or has_variable_rate:
                     remaining = item.get("warrants_remaining", 0) or 0
                     if remaining > 0:
                         warrants.append(item)
             elif not is_warrant and item.get("conversion_price"):
-                if item["conversion_price"] <= max_price:
+                if item["conversion_price"] <= max_price or has_variable_rate:
                     remaining = item.get("underlying_shares_remaining", 0) or 0
                     if remaining > 0:
                         convertibles.append(item)
@@ -1332,6 +1335,7 @@ class DilutionOverlay:
                     f"Strike: ${ex_price:.2f}",
                     (w.get("filed_at") or "")[:10],
                     in_money,
+                    w.get("price_protection", ""),
                 )
 
         if convertibles:
@@ -1348,6 +1352,7 @@ class DilutionOverlay:
                     f"Conv: ${conv_price:.2f}",
                     (c.get("filed_at") or "")[:10],
                     in_money,
+                    c.get("price_protection", ""),
                 )
 
         if dilution_url:
@@ -1407,7 +1412,7 @@ class DilutionOverlay:
             self._bind_card_click(card, url)
 
     def _add_dilution_row(self, parent, details, remaining, price, filed,
-                          price_above=False):
+                          price_above=False, price_protection: str = ""):
         # Green if strike/conv price <= stock price (in the money), orange otherwise
         highlight = "#4CAF50" if price_above else "#FF9800"
 
@@ -1434,6 +1439,13 @@ class DilutionOverlay:
                  font=FONT_MONO_BOLD).pack(side="left")
         tk.Label(data_row, text=f"  |  Filed: {filed}", fg=FG_DIM, bg=BG_ROW,
                  font=FONT_MONO).pack(side="left")
+
+        # Line 3: price protection (if present)
+        if price_protection:
+            is_variable = "Variable" in price_protection
+            pp_color = RED if is_variable else FG_DIM
+            tk.Label(inner, text=f"Protection: {price_protection}", fg=pp_color, bg=BG_ROW,
+                     font=FONT_MONO, anchor="w").pack(fill="x", pady=(2, 0))
 
     # ── Gainers panel ───────────────────────────────────────────────────────
     def _schedule_gainers_refresh(self):
