@@ -249,19 +249,19 @@ def fetch_top_gainers() -> list[dict]:
         })
 
     # Enrich with Ask Edgar data in parallel
-    def enrich(item, include_screener=False, include_dilution=False):
+    def enrich(item, include_enrichment=False):
         ticker = item["ticker"]
-        if include_screener:
-            sdata = fetch_screener_data(ticker)
-            if sdata:
-                item["_float"] = sdata.get("tradable_float")
-                item["_mcap"] = sdata.get("market_cap")
-                item["_sector"] = sdata.get("sector", "")
-                item["_country"] = sdata.get("country", "")
-        if include_dilution:
-            ddata = fetch_dilution_data(ticker)
-            if ddata:
-                item["_risk"] = ddata.get("overall_offering_risk", "")
+        if not include_enrichment:
+            return item
+        sdata = fetch_screener_data(ticker)
+        if sdata:
+            item["_float"] = sdata.get("tradable_float")
+            item["_mcap"] = sdata.get("market_cap")
+            item["_sector"] = sdata.get("sector", "")
+            item["_country"] = sdata.get("country", "")
+        ddata = fetch_dilution_data(ticker)
+        if ddata:
+            item["_risk"] = ddata.get("overall_offering_risk", "")
         # Check for news/filings today (uses cached news data)
         from datetime import datetime
         today = datetime.now().strftime("%Y-%m-%d")
@@ -278,7 +278,7 @@ def fetch_top_gainers() -> list[dict]:
 
     enriched = []
     with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(enrich, item, i < 10, i < 10): item for i, item in enumerate(tickers_data[:30])}
+        futures = {executor.submit(enrich, item, i < 10): item for i, item in enumerate(tickers_data[:30])}
         for future in futures:
             result = future.result()
             if result is not None:
