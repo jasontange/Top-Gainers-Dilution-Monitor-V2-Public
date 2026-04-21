@@ -429,12 +429,12 @@ def fetch_in_play_dilution(ticker: str) -> tuple[list[dict], list[dict], float]:
 
             has_variable_rate = "Variable" in (item.get("price_protection") or "")
 
-            if is_warrant and item.get("warrants_exercise_price"):
+            if is_warrant and item.get("warrants_exercise_price") is not None:
                 if item["warrants_exercise_price"] <= max_price or has_variable_rate:
                     remaining = item.get("warrants_remaining", 0) or 0
                     if remaining > 0:
                         warrants.append(item)
-            elif not is_warrant and item.get("conversion_price"):
+            elif not is_warrant and item.get("conversion_price") is not None:
                 if item["conversion_price"] <= max_price or has_variable_rate:
                     remaining = item.get("underlying_shares_remaining", 0) or 0
                     if remaining > 0:
