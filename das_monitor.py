@@ -514,7 +514,7 @@ def fetch_split_status(ticker: str) -> list[dict]:
             resp = requests.get(
                 SPLIT_STATUS_URL,
                 headers={"API-KEY": SPLIT_STATUS_KEY, "Content-Type": "application/json"},
-                params={"ticker": ticker, "limit": 10},
+                params={"ticker": ticker, "limit": 3},
                 timeout=10,
             )
             data = resp.json()
