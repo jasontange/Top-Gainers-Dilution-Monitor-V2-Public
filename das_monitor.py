@@ -50,7 +50,12 @@ SPLIT_STATUS_URL = "https://eapi.askedgar.io/v1/split-status"
 SPLIT_STATUS_KEY = ASKEDGAR_API_KEY
 POLL_INTERVAL = 1.0
 
-# TradingView real-time data (session cookie for live prices)
+# Massive / Polygon API (primary source for top gainers)
+POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY", "")
+POLYGON_GAINERS_URL = "https://api.massive.com/v2/snapshot/locale/us/markets/stocks/gainers"
+POLYGON_TICKER_URL = "https://api.massive.com/v3/reference/tickers"
+
+# TradingView real-time data (fallback for top gainers if Massive fails)
 TRADINGVIEW_SESSION_ID = os.environ.get("TRADINGVIEW_SESSION_ID", "")
 GAINERS_REFRESH_SECS = 60
 MIN_GAINER_PCT = 15  # minimum % change to show in gainers list
@@ -206,13 +211,76 @@ def _tv_cookies():
     return jar
 
 
-def fetch_top_gainers() -> list[dict]:
-    """Fetch top premarket gainers from TradingView (real-time), enriched with Ask Edgar data."""
+def _fetch_massive_gainers() -> list[dict] | None:
+    """Fetch top gainers from Massive API. Returns list of raw ticker dicts or None on failure."""
+    if not POLYGON_API_KEY:
+        return None
+    try:
+        resp = requests.get(
+            POLYGON_GAINERS_URL,
+            params={"apiKey": POLYGON_API_KEY},
+            timeout=15,
+        )
+        data = resp.json()
+        tickers_data = data.get("tickers", [])
+        print(f"Massive API [{resp.status_code}]: {len(tickers_data)} tickers")
+    except Exception as e:
+        print(f"Massive API error: {e}")
+        return None
+
+    # Filter by ticker pattern (2-4 uppercase letters)
+    filtered = [t for t in tickers_data if TICKER_RE.match(t.get("ticker", ""))]
+
+    # Check type == CS via Polygon ticker endpoint (parallel)
+    def check_cs(item):
+        ticker = item["ticker"]
+        try:
+            resp = requests.get(
+                f"{POLYGON_TICKER_URL}/{ticker}",
+                params={"apiKey": POLYGON_API_KEY},
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("results", {}).get("type") != "CS":
+                return None
+        except Exception:
+            return None
+        return item
+
+    cs_gainers = []
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(check_cs, item): item for item in filtered[:30]}
+        for future in futures:
+            result = future.result()
+            if result is not None:
+                cs_gainers.append(result)
+
+    # Convert to internal format
+    results = []
+    for t in cs_gainers:
+        day = t.get("day", {})
+        pct = t.get("todaysChangePerc", 0)
+        price = day.get("c", 0) or t.get("lastTrade", {}).get("p", 0) or 0
+        volume = day.get("v", 0) or t.get("min", {}).get("av", 0) or 0
+        results.append({
+            "ticker": t["ticker"],
+            "todaysChangePerc": pct,
+            "price": price,
+            "volume": int(volume),
+            "day": day,
+            "lastTrade": t.get("lastTrade", {}),
+            "min": t.get("min", {}),
+        })
+    return results
+
+
+def _fetch_tv_gainers() -> list[dict] | None:
+    """Fetch top gainers from TradingView (fallback). Returns list of internal-format dicts or None."""
     try:
         from tradingview_screener import Query, col
     except ImportError:
         print("tradingview-screener not installed. Run: pip install tradingview-screener")
-        return []
+        return None
 
     try:
         cookies = _tv_cookies()
@@ -225,28 +293,41 @@ def fetch_top_gainers() -> list[dict]:
             .get_scanner_data(cookies=cookies if TRADINGVIEW_SESSION_ID else None))
     except Exception as e:
         print(f"TradingView scanner error: {e}")
-        return []
+        return None
 
-    # Convert DataFrame to our internal format
     tickers_data = []
     for _, row in df.iterrows():
         ticker = row.get("name", "")
         if not TICKER_RE.match(ticker):
             continue
-        # Extract exchange from "NASDAQ:SKYQ" format
-        exchange = ""
-        full_ticker = row.get("ticker", "")
-        if ":" in full_ticker:
-            exchange = full_ticker.split(":")[0]
         pct = row.get("premarket_change") or 0
         tickers_data.append({
             "ticker": ticker,
-            "_exchange": exchange,
             "todaysChangePerc": pct,
             "price": row.get("premarket_close") or row.get("close") or 0,
             "volume": int(row.get("premarket_volume") or row.get("volume") or 0),
             "_tv_mcap": row.get("market_cap_basic") or 0,
         })
+    return tickers_data
+
+
+def fetch_top_gainers() -> list[dict]:
+    """Fetch top gainers: Massive API primary, TradingView fallback. Enriched with Ask Edgar data."""
+    # Try Massive first
+    tickers_data = _fetch_massive_gainers()
+    source = "Massive"
+
+    # Fall back to TradingView
+    if not tickers_data:
+        print("Massive failed or empty, falling back to TradingView...")
+        tickers_data = _fetch_tv_gainers()
+        source = "TradingView"
+
+    if not tickers_data:
+        print("Both Massive and TradingView failed.")
+        return []
+
+    print(f"Top gainers source: {source} ({len(tickers_data)} tickers)")
 
     # Enrich with Ask Edgar data in parallel
     def enrich(item, include_enrichment=False):
