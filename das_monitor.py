@@ -30,13 +30,13 @@ except ImportError:
 # See .env.example for details
 ASKEDGAR_API_KEY = os.environ.get("ASKEDGAR_API_KEY", "")
 
-DILUTION_API_URL = "https://eapi.askedgar.io/enterprise/v1/dilution-rating"
+DILUTION_API_URL = "https://eapi.askedgar.io/v1/dilution-rating"
 DILUTION_API_KEY = ASKEDGAR_API_KEY
 NEWS_API_URL = "https://eapi.askedgar.io/v1/news-basic"
 NEWS_API_KEY = ASKEDGAR_API_KEY
-DILDATA_API_URL = "https://eapi.askedgar.io/enterprise/v1/dilution-data"
+DILDATA_API_URL = "https://eapi.askedgar.io/v1/dilution-data"
 DILDATA_API_KEY = ASKEDGAR_API_KEY
-SCREENER_API_URL = "https://eapi.askedgar.io/enterprise/v1/screener"
+SCREENER_API_URL = "https://eapi.askedgar.io/v1/screener"
 SCREENER_API_KEY = ASKEDGAR_API_KEY
 CHART_ANALYSIS_URL = "https://eapi.askedgar.io/v1/ai-chart-analysis"
 CHART_ANALYSIS_KEY = ASKEDGAR_API_KEY
