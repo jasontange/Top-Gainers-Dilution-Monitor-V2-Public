@@ -337,7 +337,7 @@ def fetch_top_gainers() -> list[dict]:
         sdata = fetch_screener_data(ticker)
         if sdata:
             item["_float"] = sdata.get("tradable_float")
-            item["_mcap"] = sdata.get("market_cap")
+            item["_mcap"] = sdata.get("market_cap_final")
             item["_sector"] = sdata.get("sector", "")
             item["_country"] = sdata.get("country", "")
         ddata = fetch_dilution_data(ticker)
@@ -925,7 +925,7 @@ class DilutionOverlay:
         if floatdata:
             flt = fmt_millions(floatdata.get("tradable_float"))
             outs = fmt_millions(floatdata.get("outstanding"))
-            mc = fmt_millions(floatdata.get("market_cap"))
+            mc = fmt_millions(floatdata.get("market_cap_final"))
             sector = floatdata.get("sector", "")
             country = floatdata.get("country", "")
             self.info_label.config(
