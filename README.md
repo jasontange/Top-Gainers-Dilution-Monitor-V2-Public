@@ -1,5 +1,8 @@
 # Ask Edgar Dilution Monitor
 
+***Disclaimer***
+I've created many variations of this with different endpoints, so I don't have an accurate estimate of what it costs to run this on a daily basis using the Ask Edgar API
+
 A real-time desktop overlay that monitors your trading platform for ticker changes and instantly displays dilution risk data from [Ask Edgar](https://askedgar.io).
 
 When you switch tickers in DAS Trader Pro or thinkorswim, the overlay automatically fetches and shows:
