@@ -231,7 +231,7 @@ def _fetch_massive_gainers() -> list[dict] | None:
     # Filter by ticker pattern (2-4 uppercase letters)
     filtered = [t for t in tickers_data if TICKER_RE.match(t.get("ticker", ""))]
 
-    # Check type == CS via Polygon ticker endpoint (parallel)
+    # Check type == CS or ADRC via Polygon ticker endpoint (parallel)
     def check_cs(item):
         ticker = item["ticker"]
         try:
@@ -241,7 +241,7 @@ def _fetch_massive_gainers() -> list[dict] | None:
                 timeout=10,
             )
             data = resp.json()
-            if data.get("results", {}).get("type") != "CS":
+            if data.get("results", {}).get("type") not in ("CS", "ADRC"):
                 return None
         except Exception:
             return None
