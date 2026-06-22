@@ -398,7 +398,7 @@ def _cached_news_results(ticker: str) -> list[dict] | None:
             resp = requests.get(
                 NEWS_API_URL,
                 headers={"API-KEY": NEWS_API_KEY, "Content-Type": "application/json"},
-                params={"ticker": ticker, "offset": 0, "limit": 100},
+                params={"ticker": ticker, "page": 1, "limit": 100},
                 timeout=10,
             )
             data = resp.json()
@@ -410,13 +410,31 @@ def _cached_news_results(ticker: str) -> list[dict] | None:
     return _cached_fetch(f"news:{ticker}", _fetch)
 
 
+def _cached_jmt415_results(ticker: str) -> list[dict] | None:
+    """Fetch jmt415 notes for a ticker via form_type filter, cached."""
+    def _fetch():
+        try:
+            resp = requests.get(
+                NEWS_API_URL,
+                headers={"API-KEY": NEWS_API_KEY, "Content-Type": "application/json"},
+                params={"ticker": ticker, "form_type": "jmt415", "page": 1, "limit": 3},
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("status") == "success":
+                return data.get("results", [])
+        except Exception as e:
+            print(f"JMT415 API error for {ticker}: {e}")
+        return None
+    return _cached_fetch(f"jmt415:{ticker}", _fetch)
+
+
 def fetch_news_and_grok(ticker: str) -> tuple[list[dict], str | None, str | None, str | None, list[dict]]:
-    """Fetch recent news/8-K/6-K (top 2), latest grok, and all jmt415 notes."""
+    """Fetch recent news/8-K/6-K (top 2), latest grok, and jmt415 notes."""
     headlines = []
     grok_line = None
     grok_date = None
     grok_url = None
-    jmt415_notes = []
     results = _cached_news_results(ticker)
     if results:
         for r in results:
@@ -430,11 +448,9 @@ def fetch_news_and_grok(ticker: str) -> tuple[list[dict], str | None, str | None
                     if line:
                         grok_line = line
                         break
-                # created_at includes time, fall back to filed_at
                 grok_date = r.get("created_at") or r.get("filed_at", "")
                 grok_url = r.get("url") or r.get("document_url")
-            if ft == "jmt415" and len(jmt415_notes) < 3:
-                jmt415_notes.append(r)
+    jmt415_notes = _cached_jmt415_results(ticker) or []
     return headlines, grok_line, grok_date, grok_url, jmt415_notes
 
 
